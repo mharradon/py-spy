@@ -189,7 +189,23 @@ impl PythonSpy {
         } else {
             for thread in self.process.threads()?.iter() {
                 let threadid: Tid = thread.id()?;
-                thread_activity.insert(threadid, thread.active()?);
+                match thread.active() {
+                    Ok(tid) => {
+                        thread_activity.insert(threadid, tid);
+                        Ok(())
+                    }
+                    // The thread may have died by the time we get here, so just skip it.
+                    Err(remoteprocess::Error::IOError(ioerror))
+                        if ioerror.kind() == std::io::ErrorKind::NotFound
+                            || ioerror.raw_os_error() == Some(nix::errno::Errno::ESRCH as i32) =>
+                    {
+                        warn!("thread {:?} died while being collected", threadid);
+                        Ok(())
+                    }
+                    // Should we just always ignore these?
+                    Err(err) => Err(err),
+                }
+                .with_context(|| format!("Failed getting status for OS thread {:?}", threadid))?
             }
         }
 
