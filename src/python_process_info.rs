@@ -14,11 +14,12 @@ use remoteprocess::{Pid, ProcessMemory};
 
 use crate::binary_parser::{parse_binary, BinaryInfo};
 use crate::config::Config;
+use crate::config::LineNo;
 use crate::python_bindings::{
     pyruntime, v2_7_15, v3_10_0, v3_11_0, v3_3_7, v3_5_5, v3_6_6, v3_7_0, v3_8_0, v3_9_5,
 };
 use crate::python_interpreters::{InterpreterState, ThreadState};
-use crate::stack_trace::get_stack_traces;
+use crate::stack_trace::get_stack_trace;
 use crate::version::Version;
 
 /// Holds information about the python process: memory map layout, parsed binary info
@@ -455,7 +456,7 @@ where
 
                     // as a final sanity check, try getting the stack_traces, and only return if this works
                     if thread.interp() as usize == addr
-                        && get_stack_traces(&interp, process, 0, None).is_ok()
+                        && get_stack_trace(&thread, process, false, LineNo::NoLine).is_ok()
                     {
                         return Ok(addr);
                     }
