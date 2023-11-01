@@ -187,8 +187,13 @@ impl PythonSpy {
             // Don't need to collect thread activity if we're only getting the
             // GIL thread: If we're holding the GIL we're by definition active.
         } else {
-            for thread in self.process.threads()?.iter() {
-                let threadid: Tid = thread.id()?;
+            for thread in self
+                .process
+                .threads()
+                .context("Failed to get process threads")?
+                .iter()
+            {
+                let threadid: Tid = thread.id().context("Failed to get thread ID")?;
                 match thread.active() {
                     Ok(tid) => {
                         thread_activity.insert(threadid, tid);
@@ -222,8 +227,8 @@ impl PythonSpy {
         // TODO: hoist most of this code out to stack_trace.rs, and
         // then annotate the output of that with things like native stack traces etc
         //      have moved in gil / locals etc
-        let gil_thread_id =
-            get_gil_threadid::<I, Process>(self.threadstate_address, &self.process)?;
+        let gil_thread_id = get_gil_threadid::<I, Process>(self.threadstate_address, &self.process)
+            .context("Failed to get GIL thread ID")?;
 
         // Get the python interpreter, and loop over all the python threads
         let interp: I = self
@@ -253,7 +258,14 @@ impl PythonSpy {
                 &self.process,
                 self.config.dump_locals > 0,
                 self.config.lineno,
-            )?;
+            )
+            .with_context(|| {
+                format!(
+                    "Failed to get stack trace for thread {:?} ({:016x})",
+                    thread.thread_id(),
+                    threads as usize
+                )
+            })?;
 
             // Try getting the native thread id
 
@@ -261,7 +273,11 @@ impl PythonSpy {
             // for older versions of python, try using OS specific code to get the native
             // thread id (doesn't work on freebsd, or on arm/i686 processors on linux)
             if trace.os_thread_id.is_none() {
-                let mut os_thread_id = self._get_os_thread_id(python_thread_id, &interp)?;
+                let mut os_thread_id = self
+                    ._get_os_thread_id(python_thread_id, &interp)
+                    .with_context(|| {
+                        format!("Failed to get OS thread ID for {:?}", thread.thread_id())
+                    })?;
 
                 // linux can see issues where pthread_ids get recycled for new OS threads,
                 // which totally breaks the caching we were doing here. Detect this and retry
@@ -270,7 +286,14 @@ impl PythonSpy {
                         info!("clearing away thread id caches, thread {} has exited", tid);
                         self.python_thread_ids.clear();
                         self.python_thread_names.clear();
-                        os_thread_id = self._get_os_thread_id(python_thread_id, &interp)?;
+                        os_thread_id = self
+                            ._get_os_thread_id(python_thread_id, &interp)
+                            .with_context(|| {
+                                format!(
+                                    "Failed to get OS thread ID for {:?} (take 2)",
+                                    thread.thread_id()
+                                )
+                            })?;
                     }
                 }
 

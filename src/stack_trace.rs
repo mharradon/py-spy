@@ -120,7 +120,11 @@ where
     // python 3.11+ has an extra level of indirection to get the Frame from the threadstate
     let mut frame_address = thread.frame_address();
     if let Some(addr) = frame_address {
-        frame_address = Some(process.copy_struct(addr)?);
+        frame_address = Some(
+            process
+                .copy_struct(addr)
+                .context("Failed to get initial frame")?,
+        );
     }
 
     let mut frame_ptr = thread.frame(frame_address);
@@ -155,7 +159,7 @@ where
         };
 
         let locals = if copy_locals {
-            Some(get_locals(&code, frame_ptr, &frame, process)?)
+            Some(get_locals(&code, frame_ptr, &frame, process).context("Failed to copy locals")?)
         } else {
             None
         };
