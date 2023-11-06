@@ -4,7 +4,9 @@ use std::path::Path;
 
 use anyhow::Error;
 use goblin::Object;
+use lazy_static::lazy_static;
 use memmap2::Mmap;
+use regex::Regex;
 
 pub struct BinaryInfo {
     pub symbols: HashMap<String, u64>,
@@ -82,6 +84,14 @@ pub fn parse_binary(filename: &Path, addr: u64) -> Result<BinaryInfo, Error> {
         }
 
         Object::Elf(elf) => {
+            // When using LTO, LLVM may suffix local symbols to avoid conflicts
+            // (e.g. `Py_GetVersion.version.llvm.1990823568301052423`), which can
+            // break lookups to find these internal symbols by their expected names.
+            // In lieu of a better solution, just strip these suffixes.
+            lazy_static! {
+                static ref _LLVM_SUFFIX: Regex = Regex::new(r"[.]llvm[.][0-9]+$").unwrap();
+            }
+
             let strtab = elf.shdr_strtab;
             let bss_header = elf
                 .section_headers
@@ -127,7 +137,9 @@ pub fn parse_binary(filename: &Path, addr: u64) -> Result<BinaryInfo, Error> {
                 if sym.st_shndx == goblin::elf::section_header::SHN_UNDEF as usize {
                     continue;
                 }
-                let name = elf.strtab[sym.st_name].to_string();
+                let name = _LLVM_SUFFIX
+                    .replace(&elf.strtab[sym.st_name], "")
+                    .to_string();
                 symbols.insert(name, sym.st_value + offset);
             }
             for dynsym in elf.dynsyms.iter() {
