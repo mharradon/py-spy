@@ -437,6 +437,11 @@ impl PythonSpy {
         python_thread_id: u64,
         interp: &I,
     ) -> Result<Option<Tid>, Error> {
+        // This appears to slow down sampling for FB python binaries, so only use it for native traces.
+        if !self.config.native {
+            return Ok(None);
+        }
+
         // in nonblocking mode, we can't get the threadid reliably (method here requires reading the RBX
         // register which requires a ptrace attach). fallback to heuristic thread activity here
         if self.config.blocking == LockingStrategy::NonBlocking {
