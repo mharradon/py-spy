@@ -89,6 +89,10 @@ fn sample_console(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
 pub trait Recorder {
     fn increment(&mut self, traces: Vec<StackTrace>) -> Result<(), Error>;
     fn write(&mut self, w: &mut dyn Write) -> Result<(), Error>;
+    fn write_on_demand(&mut self, _w: &mut dyn Write) -> Result<(), Error> {
+        eprintln!("on-demand trace writing not supported");
+        Ok(())
+    }
 }
 
 impl Recorder for speedscope::Stats {
@@ -120,6 +124,9 @@ impl Recorder for chrometrace::Chrometrace {
         self.increment(traces)
     }
     fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
+        self.write(w)
+    }
+    fn write_on_demand(&mut self, w: &mut dyn Write) -> Result<(), Error> {
         self.write(w)
     }
 }
@@ -235,6 +242,11 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
         r.store(false, Ordering::SeqCst);
     })?;
 
+    // Record when we receive a SIGUSR1, which means we should attempt to dump
+    // a trace immediately.
+    let write_on_demand = Arc::new(AtomicBool::new(false));
+    let _ = signal_hook::flag::register(libc::SIGUSR1, Arc::clone(&write_on_demand));
+
     let mut exit_message = "Stopped sampling because process exited";
     let mut last_late_message = std::time::Instant::now();
 
@@ -319,6 +331,13 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
                 warn!("Failed to get stack trace from {}: {}", pid, e);
                 errors += 1;
             }
+        }
+
+        // Write out an "on-demand" trace, triggered by a user signal.
+        if write_on_demand.swap(false, Ordering::SeqCst) {
+            let mut out_file = std::fs::File::create(&filename)?;
+            eprintln!("writing on-demand trace to {:?}", filename);
+            output.write_on_demand(&mut out_file)?;
         }
 
         if config.duration == RecordDuration::Unlimited {
