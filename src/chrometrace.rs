@@ -4,6 +4,7 @@ use std::io::Write;
 use std::time::Instant;
 
 use anyhow::Error;
+use flate2::write::GzEncoder;
 use serde_derive::Serialize;
 
 use crate::stack_trace::Frame;
@@ -116,7 +117,9 @@ impl Chrometrace {
             }
         }
 
-        writeln!(w, "{}", serde_json::to_string(&events)?)?;
+        let mut encoder = GzEncoder::new(w, flate2::Compression::default());
+        writeln!(encoder, "{}", serde_json::to_string(&events)?)?;
+
         Ok(())
     }
 }
