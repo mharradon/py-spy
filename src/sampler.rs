@@ -307,7 +307,7 @@ impl PythonSpyThread {
                     spy
                 }
                 Err(e) => {
-                    warn!("Failed to profile python from process {}: {}", pid, e);
+                    warn!("Failed to profile python from process {}: {:?}", pid, e);
                     initialized_tx.send(Err(e)).unwrap();
                     return;
                 }
