@@ -161,26 +161,30 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
         None => return Err(format_err!("A file format is required to record samples")),
     };
 
-    let filename = match config.filename.clone() {
-        Some(filename) => filename,
-        None => {
-            let ext = match config.format.as_ref() {
-                Some(FileFormat::flamegraph) => "svg",
-                Some(FileFormat::speedscope) => "json",
-                Some(FileFormat::raw) => "txt",
-                Some(FileFormat::chrometrace) => "json.gz",
-                None => return Err(format_err!("A file format is required to record samples")),
-            };
-            let local_time = Local::now().to_rfc3339_opts(SecondsFormat::Secs, true);
-            let name = match config.python_program.as_ref() {
-                Some(prog) => prog[0].to_string(),
-                None => match config.pid.as_ref() {
-                    Some(pid) => pid.to_string(),
-                    None => String::from("unknown"),
-                },
-            };
-            format!("{}-{}.{}", name, local_time, ext)
-        }
+    // Use a closure to generate the filename, so that successive calls can
+    // create unique ones using embedded timestamps.
+    let create_filename = || {
+        Ok(match config.filename.clone() {
+            Some(filename) => filename,
+            None => {
+                let ext = match config.format.as_ref() {
+                    Some(FileFormat::flamegraph) => "svg",
+                    Some(FileFormat::speedscope) => "json",
+                    Some(FileFormat::raw) => "txt",
+                    Some(FileFormat::chrometrace) => "json.gz",
+                    None => return Err(format_err!("A file format is required to record samples")),
+                };
+                let local_time = Local::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+                let name = match config.python_program.as_ref() {
+                    Some(prog) => prog[0].to_string(),
+                    None => match config.pid.as_ref() {
+                        Some(pid) => pid.to_string(),
+                        None => String::from("unknown"),
+                    },
+                };
+                format!("{}-{}.{}", name, local_time, ext)
+            }
+        })
     };
 
     let sampler = sampler::Sampler::new(pid, config)?;
@@ -249,6 +253,7 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
 
     let mut exit_message = "Stopped sampling because process exited";
     let mut last_late_message = std::time::Instant::now();
+    let mut last_incremental_trace = std::time::Instant::now();
 
     for sample in sampler {
         if let Some(delay) = sample.late {
@@ -335,9 +340,21 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
 
         // Write out an "on-demand" trace, triggered by a user signal.
         if write_on_demand.swap(false, Ordering::SeqCst) {
+            let filename = create_filename()?;
             let mut out_file = std::fs::File::create(&filename)?;
             eprintln!("writing on-demand trace to {:?}", filename);
             output.write_on_demand(&mut out_file)?;
+        }
+
+        // Write an incremental trace up to this point.
+        if let Some(dump_duration) = config.dump_duration {
+            if dump_duration <= last_incremental_trace.elapsed() {
+                let filename = create_filename()?;
+                last_incremental_trace += dump_duration;
+                let mut out_file = std::fs::File::create(&filename)?;
+                eprintln!("writing incremental trace to {:?}", filename);
+                output.write_on_demand(&mut out_file)?;
+            }
         }
 
         if config.duration == RecordDuration::Unlimited {
@@ -355,6 +372,8 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
     if !exit_message.is_empty() {
         println!("\n{}{}", lede, exit_message);
     }
+
+    let filename = create_filename()?;
 
     {
         let mut out_file = std::fs::File::create(&filename)?;

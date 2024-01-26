@@ -3,6 +3,7 @@ use clap::{
     PossibleValue,
 };
 use remoteprocess::Pid;
+use std::time::Duration;
 
 /// Options on how to collect samples from a python process
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +60,8 @@ pub struct Config {
     pub refresh_seconds: f64,
     #[doc(hidden)]
     pub core_filename: Option<String>,
+    #[doc(hidden)]
+    pub dump_duration: Option<Duration>,
 }
 
 #[allow(non_camel_case_types)]
@@ -139,6 +142,7 @@ impl Default for Config {
             lineno: LineNo::LastInstruction,
             refresh_seconds: 1.0,
             core_filename: None,
+            dump_duration: None,
         }
     }
 }
@@ -242,6 +246,13 @@ impl Config {
                     .value_name("duration")
                     .help("The number of seconds to sample for")
                     .default_value("unlimited")
+                    .takes_value(true),
+            )
+            .arg(
+                Arg::new("dump_duration")
+                    .long("dump-duration")
+                    .value_name("dump_duration")
+                    .help("Dump a trace every *given* seconds")
                     .takes_value(true),
             )
             .arg(rate.clone())
@@ -372,6 +383,9 @@ impl Config {
                 };
                 config.format = Some(matches.value_of_t("format")?);
                 config.filename = matches.value_of("output").map(|f| f.to_owned());
+                config.dump_duration = matches
+                    .value_of("dump_duration")
+                    .map(|s| Duration::from_secs(s.parse().expect("")));
                 config.show_line_numbers = matches.occurrences_of("nolineno") == 0;
                 config.lineno = if matches.occurrences_of("nolineno") > 0 {
                     LineNo::NoLine
