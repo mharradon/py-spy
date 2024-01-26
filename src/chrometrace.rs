@@ -69,15 +69,14 @@ impl Chrometrace {
         }
     }
 
-    pub fn increment(&mut self, trace: &StackTrace) -> std::io::Result<()> {
-        let now = self.start_ts.elapsed().as_micros() as u64;
-
+    fn record_events(
+        &mut self,
+        now: u64,
+        trace: &StackTrace,
+        prev_trace: Option<StackTrace>,
+    ) -> std::io::Result<()> {
         // Load the previous frames for this thread.
-        let prev_frames = self
-            .prev_traces
-            .remove(&trace.thread_id)
-            .map(|t| t.frames)
-            .unwrap_or_default();
+        let prev_frames = prev_trace.map(|t| t.frames).unwrap_or_default();
 
         // Find the index where we first see new frames.
         let new_idx = prev_frames
@@ -99,8 +98,37 @@ impl Chrometrace {
             self.events.push(self.event(trace, frame, "B", now));
         }
 
-        // Save this stack trace for the next iteration.
-        self.prev_traces.insert(trace.thread_id, trace.clone());
+        Ok(())
+    }
+
+    pub fn increment(&mut self, traces: Vec<StackTrace>) -> std::io::Result<()> {
+        let now = self.start_ts.elapsed().as_micros() as u64;
+
+        // Build up a new map of the current thread traces we see.
+        let mut new_prev_traces: HashMap<_, StackTrace> = HashMap::new();
+
+        // Process each new trace.
+        for trace in traces.into_iter() {
+            let prev_trace = self.prev_traces.remove(&trace.thread_id);
+            self.record_events(now, &trace, prev_trace)?;
+            new_prev_traces.insert(trace.thread_id, trace);
+        }
+
+        // If there are any remaining previous thread traces that we didn't
+        // process above, just add end events.
+        for trace in self
+            .prev_traces
+            .drain()
+            .map(|(_, t)| t)
+            .collect::<Vec<StackTrace>>()
+        {
+            for frame in &trace.frames {
+                self.events.push(self.event(&trace, frame, "E", now));
+            }
+        }
+
+        // Save the current traces for next time.
+        self.prev_traces = new_prev_traces;
 
         Ok(())
     }
