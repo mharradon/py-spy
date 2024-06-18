@@ -62,6 +62,8 @@ pub struct Config {
     pub core_filename: Option<String>,
     #[doc(hidden)]
     pub dump_duration: Option<Duration>,
+    #[doc(hidden)]
+    pub trace_port: Option<u64>,
 }
 
 #[allow(non_camel_case_types)]
@@ -143,6 +145,7 @@ impl Default for Config {
             refresh_seconds: 1.0,
             core_filename: None,
             dump_duration: None,
+            trace_port: None,
         }
     }
 }
@@ -284,6 +287,14 @@ impl Config {
                     .long("hideprogress")
                     .hide(true)
                     .help("Hides progress bar (useful for showing error output on record)"),
+            )
+            .arg(
+                Arg::new("trace_port")
+                    .long("trace-port")
+                    .value_name("trace-port")
+                    .help("Port to run a HTTP server for on-demand traces")
+                    .takes_value(true)
+                    .required(false),
             );
 
         let top = Command::new("top")
@@ -401,6 +412,9 @@ impl Config {
                     std::process::exit(1);
                 }
                 config.hide_progress = matches.occurrences_of("hideprogress") > 0;
+                config.trace_port = matches
+                    .value_of("trace_port")
+                    .map(|p| p.parse().expect("invalid port"));
             }
             "top" => {
                 config.sampling_rate = matches.value_of_t("rate")?;

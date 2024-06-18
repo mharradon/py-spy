@@ -29,6 +29,8 @@ mod utils;
 mod version;
 
 use std::io::{Read, Write};
+use std::net::SocketAddr;
+use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,6 +43,7 @@ use console_viewer::ConsoleViewer;
 use stack_trace::{Frame, StackTrace};
 
 use chrono::{Local, SecondsFormat};
+use chunked_transfer::Encoder;
 
 #[cfg(unix)]
 fn permission_denied(err: &Error) -> bool {
@@ -215,6 +218,20 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
         }
     };
 
+    // Setup HTTP server to provide on-demand traces.
+    let listener = if let Some(port) = config.trace_port {
+        println!(
+            "{}Creating HTTP server for on-demand traces on port {}",
+            lede, port
+        );
+        let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+        let listener = TcpListener::bind(addr)?;
+        listener.set_nonblocking(true)?;
+        Some(listener)
+    } else {
+        None
+    };
+
     use indicatif::ProgressBar;
     let progress = match (config.hide_progress, &config.duration) {
         (true, _) => ProgressBar::hidden(),
@@ -354,6 +371,18 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
                 let mut out_file = std::fs::File::create(&filename)?;
                 eprintln!("writing incremental trace to {:?}", filename);
                 output.write_on_demand(&mut out_file)?;
+            }
+        }
+
+        // Write out an "on-demand" trace, triggered by a web server.
+        if let Some(listener) = &listener {
+            while let Ok((mut stream, _)) = listener.accept() {
+                println!("{}Writing on-demand trace from HTTP request", lede);
+                stream.write_all(
+                    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".as_bytes(),
+                )?;
+                let mut encoder = Encoder::new(stream);
+                output.write_on_demand(&mut encoder)?;
             }
         }
 
