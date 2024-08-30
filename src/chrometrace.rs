@@ -1,11 +1,14 @@
 use std::cmp::min;
 use std::collections::HashMap;
+use std::io::BufWriter;
+use std::io::Seek;
 use std::io::Write;
 use std::time::Instant;
 
 use anyhow::Error;
 use flate2::write::GzEncoder;
 use serde_derive::Serialize;
+use tempfile::NamedTempFile;
 
 use crate::stack_trace::Frame;
 use crate::stack_trace::StackTrace;
@@ -27,21 +30,52 @@ struct Event {
     pub ts: u64,
 }
 
+struct Writer {
+    file: GzEncoder<BufWriter<NamedTempFile>>,
+    first: bool,
+}
+
+impl Writer {
+    fn new() -> std::io::Result<Self> {
+        let mut file = GzEncoder::new(
+            BufWriter::new(NamedTempFile::new()?),
+            flate2::Compression::default(),
+        );
+        write!(file, "[")?;
+        Ok(Writer { file, first: true })
+    }
+
+    fn write(&mut self, event: Event) -> Result<(), Error> {
+        if self.first {
+            self.first = false;
+        } else {
+            write!(self.file, ",")?;
+        }
+        write!(self.file, "{}", serde_json::to_string(&event)?)?;
+        Ok(())
+    }
+
+    fn close(mut self) -> Result<NamedTempFile, Error> {
+        writeln!(self.file, "]")?;
+        Ok(self.file.finish()?.into_inner()?)
+    }
+}
+
 pub struct Chrometrace {
-    events: Vec<Event>,
+    writer: Writer,
     start_ts: Instant,
     prev_traces: HashMap<u64, StackTrace>,
     show_linenumbers: bool,
 }
 
 impl Chrometrace {
-    pub fn new(show_linenumbers: bool) -> Chrometrace {
-        Chrometrace {
-            events: Vec::new(),
+    pub fn new(show_linenumbers: bool) -> Result<Chrometrace, Error> {
+        Ok(Chrometrace {
+            writer: Writer::new()?,
             start_ts: Instant::now(),
             prev_traces: HashMap::new(),
             show_linenumbers,
-        }
+        })
     }
 
     // Return whether these frames are similar enough such that we should merge
@@ -74,7 +108,7 @@ impl Chrometrace {
         now: u64,
         trace: &StackTrace,
         prev_trace: Option<StackTrace>,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), Error> {
         // Load the previous frames for this thread.
         let prev_frames = prev_trace.map(|t| t.frames).unwrap_or_default();
 
@@ -89,19 +123,19 @@ impl Chrometrace {
         // Publish end events for the previous frames that got dropped in the
         // most recent trace.
         for frame in prev_frames.iter().rev().skip(new_idx).rev() {
-            self.events.push(self.event(trace, frame, "E", now));
+            self.writer.write(self.event(trace, frame, "E", now))?;
         }
 
         // Publish start events for frames that got added in the most recent
         // trace.
         for frame in trace.frames.iter().rev().skip(new_idx) {
-            self.events.push(self.event(trace, frame, "B", now));
+            self.writer.write(self.event(trace, frame, "B", now))?;
         }
 
         Ok(())
     }
 
-    pub fn increment(&mut self, traces: Vec<StackTrace>) -> std::io::Result<()> {
+    pub fn increment(&mut self, traces: Vec<StackTrace>) -> Result<(), Error> {
         let now = self.start_ts.elapsed().as_micros() as u64;
 
         // Build up a new map of the current thread traces we see.
@@ -123,7 +157,7 @@ impl Chrometrace {
             .collect::<Vec<StackTrace>>()
         {
             for frame in &trace.frames {
-                self.events.push(self.event(&trace, frame, "E", now));
+                self.writer.write(self.event(&trace, frame, "E", now))?;
             }
         }
 
@@ -133,20 +167,23 @@ impl Chrometrace {
         Ok(())
     }
 
-    pub fn write(&self, w: &mut dyn Write) -> Result<(), Error> {
-        let mut events = Vec::new();
-        events.extend(self.events.to_vec());
-
+    pub fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
         // Add end events for any unfinished slices.
         let now = self.start_ts.elapsed().as_micros() as u64;
         for trace in self.prev_traces.values() {
             for frame in &trace.frames {
-                events.push(self.event(trace, frame, "E", now));
+                self.writer.write(self.event(trace, frame, "E", now))?;
             }
         }
 
-        let mut encoder = GzEncoder::new(w, flate2::Compression::default());
-        writeln!(encoder, "{}", serde_json::to_string(&events)?)?;
+        let mut writer = Writer::new()?;
+        std::mem::swap(&mut self.writer, &mut writer);
+        let mut reader = writer.close()?;
+        reader.rewind()?;
+        std::io::copy(reader.as_file_mut(), w)?;
+
+        self.start_ts = Instant::now();
+        self.prev_traces.clear();
 
         Ok(())
     }

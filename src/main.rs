@@ -88,7 +88,7 @@ fn sample_console(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
 
 pub trait Recorder {
     fn increment(&mut self, traces: Vec<StackTrace>) -> Result<(), Error>;
-    fn write(&self, w: &mut dyn Write) -> Result<(), Error>;
+    fn write(&mut self, w: &mut dyn Write) -> Result<(), Error>;
 }
 
 impl Recorder for speedscope::Stats {
@@ -98,8 +98,8 @@ impl Recorder for speedscope::Stats {
         }
         Ok(())
     }
-    fn write(&self, w: &mut dyn Write) -> Result<(), Error> {
-        self.write(w)
+    fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
+        speedscope::Stats::write(self, w)
     }
 }
 
@@ -110,16 +110,16 @@ impl Recorder for flamegraph::Flamegraph {
         }
         Ok(())
     }
-    fn write(&self, w: &mut dyn Write) -> Result<(), Error> {
-        self.write(w)
+    fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
+        flamegraph::Flamegraph::write(self, w)
     }
 }
 
 impl Recorder for chrometrace::Chrometrace {
     fn increment(&mut self, traces: Vec<StackTrace>) -> Result<(), Error> {
-        Ok(self.increment(traces)?)
+        self.increment(traces)
     }
-    fn write(&self, w: &mut dyn Write) -> Result<(), Error> {
+    fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
         self.write(w)
     }
 }
@@ -134,7 +134,7 @@ impl Recorder for RawFlamegraph {
         Ok(())
     }
 
-    fn write(&self, w: &mut dyn Write) -> Result<(), Error> {
+    fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
         self.0.write_raw(w)
     }
 }
@@ -149,7 +149,7 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
             config.show_line_numbers,
         ))),
         Some(FileFormat::chrometrace) => {
-            Box::new(chrometrace::Chrometrace::new(config.show_line_numbers))
+            Box::new(chrometrace::Chrometrace::new(config.show_line_numbers)?)
         }
         None => return Err(format_err!("A file format is required to record samples")),
     };
