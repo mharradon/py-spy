@@ -5,10 +5,13 @@ use std::io::Seek;
 use std::io::Write;
 use std::time::Instant;
 
+use anyhow::anyhow;
 use anyhow::Error;
 use flate2::write::GzEncoder;
 use serde_derive::Serialize;
 use tempfile::NamedTempFile;
+use zstd::stream::read::Decoder;
+use zstd::stream::write::Encoder;
 
 use crate::stack_trace::Frame;
 use crate::stack_trace::StackTrace;
@@ -31,16 +34,13 @@ struct Event<'a> {
 }
 
 struct Writer {
-    file: GzEncoder<BufWriter<NamedTempFile>>,
+    file: BufWriter<Encoder<'static, BufWriter<NamedTempFile>>>,
     first: bool,
 }
 
 impl Writer {
     fn new() -> std::io::Result<Self> {
-        let mut file = GzEncoder::new(
-            BufWriter::new(NamedTempFile::new()?),
-            flate2::Compression::default(),
-        );
+        let mut file = BufWriter::new(Encoder::new(BufWriter::new(NamedTempFile::new()?), 0)?);
         write!(file, "[")?;
         Ok(Writer { file, first: true })
     }
@@ -51,13 +51,18 @@ impl Writer {
         } else {
             write!(self.file, ",")?;
         }
-        write!(self.file, "{}", serde_json::to_string(&event)?)?;
+        serde_json::to_writer(&mut self.file, &event)?;
         Ok(())
     }
 
     fn close(mut self) -> Result<NamedTempFile, Error> {
         writeln!(self.file, "]")?;
-        Ok(self.file.finish()?.into_inner()?)
+        Ok(self
+            .file
+            .into_inner()
+            .map_err(|_| anyhow!("fail"))?
+            .finish()?
+            .into_inner()?)
     }
 }
 
@@ -177,11 +182,16 @@ impl Chrometrace {
             }
         }
 
+        // Re-encode the buffered events from zstd to gzip as tools like
+        // chrome://tracing and perfetto nativelt support the latter (but
+        // not the former).
         let mut writer = Writer::new()?;
         std::mem::swap(&mut self.writer, &mut writer);
         let mut reader = writer.close()?;
         reader.rewind()?;
-        std::io::copy(reader.as_file_mut(), w)?;
+        let mut reader = Decoder::new(reader)?;
+        let mut writer = GzEncoder::new(w, flate2::Compression::default());
+        std::io::copy(&mut reader, &mut writer)?;
 
         self.start_ts = Instant::now();
         self.prev_traces.clear();
