@@ -14,17 +14,17 @@ use crate::stack_trace::Frame;
 use crate::stack_trace::StackTrace;
 
 #[derive(Clone, Debug, Serialize)]
-struct Args {
-    pub filename: String,
+struct Args<'a> {
+    pub filename: &'a str,
     pub line: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct Event {
-    pub args: Args,
-    pub cat: String,
-    pub name: String,
-    pub ph: String,
+struct Event<'a> {
+    pub args: Args<'a>,
+    pub cat: &'a str,
+    pub name: &'a str,
+    pub ph: &'a str,
     pub pid: u64,
     pub tid: u64,
     pub ts: u64,
@@ -81,19 +81,25 @@ impl Chrometrace {
     // Return whether these frames are similar enough such that we should merge
     // them, instead of creating separate events for them.
     fn should_merge_frames(&self, a: &Frame, b: &Frame) -> bool {
-        a.name == b.name && a.filename == b.filename && (!self.show_linenumbers || a.line == b.line)
+        (!self.show_linenumbers || a.line == b.line) && a.name == b.name && a.filename == b.filename
     }
 
-    fn event(&self, trace: &StackTrace, frame: &Frame, phase: &str, ts: u64) -> Event {
+    fn event<'a>(
+        &self,
+        trace: &'a StackTrace,
+        frame: &'a Frame,
+        phase: &'a str,
+        ts: u64,
+    ) -> Event<'a> {
         Event {
             tid: trace.thread_id,
             pid: trace.pid as u64,
-            name: frame.name.to_string(),
-            cat: "py-spy".to_owned(),
-            ph: phase.to_owned(),
+            name: frame.name.as_str(),
+            cat: "py-spy",
+            ph: phase,
             ts,
             args: Args {
-                filename: frame.filename.to_string(),
+                filename: frame.filename.as_str(),
                 line: if self.show_linenumbers {
                     Some(frame.line as u32)
                 } else {
@@ -139,7 +145,7 @@ impl Chrometrace {
         let now = self.start_ts.elapsed().as_micros() as u64;
 
         // Build up a new map of the current thread traces we see.
-        let mut new_prev_traces: HashMap<_, StackTrace> = HashMap::new();
+        let mut new_prev_traces: HashMap<_, StackTrace> = HashMap::with_capacity(traces.len());
 
         // Process each new trace.
         for trace in traces.into_iter() {
@@ -150,14 +156,9 @@ impl Chrometrace {
 
         // If there are any remaining previous thread traces that we didn't
         // process above, just add end events.
-        for trace in self
-            .prev_traces
-            .drain()
-            .map(|(_, t)| t)
-            .collect::<Vec<StackTrace>>()
-        {
+        for trace in self.prev_traces.values() {
             for frame in &trace.frames {
-                self.writer.write(self.event(&trace, frame, "E", now))?;
+                self.writer.write(self.event(trace, frame, "E", now))?;
             }
         }
 
