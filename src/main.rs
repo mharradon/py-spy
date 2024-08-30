@@ -70,7 +70,7 @@ fn sample_console(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
 
     let mut console =
         ConsoleViewer::new(config.show_line_numbers, &display, &sampler.version, config)?;
-    for sample in sampler {
+    while let Some(sample) = sampler.next() {
         if let Some(elapsed) = sample.late {
             console.increment_late_sample(elapsed);
         }
@@ -270,9 +270,10 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
 
     let mut exit_message = "Stopped sampling because process exited";
     let mut last_late_message = std::time::Instant::now();
+    let mut last_pending_message = std::time::Instant::now();
     let mut last_incremental_trace = std::time::Instant::now();
 
-    for sample in sampler {
+    while let Some(sample) = sampler.next() {
         if let Some(delay) = sample.late {
             if delay > Duration::from_secs(1) {
                 if config.hide_progress {
@@ -286,6 +287,25 @@ fn record_samples(pid: remoteprocess::Pid, config: &Config) -> Result<(), Error>
                     let term = console::Term::stdout();
                     term.move_cursor_up(2)?;
                     println!("{:.2?} behind in sampling, results may be inaccurate. Try reducing the sampling rate.", delay);
+                    term.move_cursor_down(1)?;
+                }
+            }
+
+            // Also print out the number of pending samples, as this can correspond
+            // to memory overhead.
+            let pending = sampler.get_pending();
+            if pending > 100 {
+                if config.hide_progress {
+                    // display a message if we're late, but don't spam the log
+                    let now = std::time::Instant::now();
+                    if now - last_pending_message > Duration::from_secs(1) {
+                        last_pending_message = now;
+                        println!("{}{} backlogged samples -- processing is behind which can lead to excessive memory overhead.", lede, pending);
+                    }
+                } else {
+                    let term = console::Term::stdout();
+                    term.move_cursor_up(2)?;
+                    println!("{} backlogged samples -- processing is behind which can lead to excessive memory overhead.", pending);
                     term.move_cursor_down(1)?;
                 }
             }

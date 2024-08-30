@@ -1,6 +1,8 @@
 #![allow(clippy::type_complexity)]
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -20,6 +22,7 @@ pub struct Sampler {
     pub version: Option<Version>,
     rx: Option<Receiver<Sample>>,
     sampling_thread: Option<thread::JoinHandle<()>>,
+    pending: Arc<AtomicUsize>,
 }
 
 pub struct Sample {
@@ -40,11 +43,13 @@ impl Sampler {
     /// Creates a new sampler object, reading from a single process only
     fn new_sampler(pid: Pid, config: &Config) -> Result<Sampler, Error> {
         let (tx, rx): (Sender<Sample>, Receiver<Sample>) = mpsc::channel();
+        let pending = Arc::new(AtomicUsize::new(0));
         let (initialized_tx, initialized_rx): (
             Sender<Result<Version, Error>>,
             Receiver<Result<Version, Error>>,
         ) = mpsc::channel();
         let config = config.clone();
+        let sampling_pending = pending.clone();
         let sampling_thread = thread::spawn(move || {
             // We need to create this object inside the thread here since PythonSpy objects don't
             // have the Send trait implemented on linux
@@ -79,6 +84,7 @@ impl Sampler {
                 };
 
                 let late = sleep.err();
+                sampling_pending.fetch_add(1, Ordering::SeqCst);
                 if tx
                     .send(Sample {
                         traces,
@@ -97,6 +103,7 @@ impl Sampler {
             rx: Some(rx),
             version: Some(version),
             sampling_thread: Some(sampling_thread),
+            pending,
         })
     }
 
@@ -180,6 +187,8 @@ impl Sampler {
         // Create a new thread to generate samples
         let config = config.clone();
         let (tx, rx): (Sender<Sample>, Receiver<Sample>) = mpsc::channel();
+        let pending = Arc::new(AtomicUsize::new(0));
+        let sampling_pending = pending.clone();
         let sampling_thread = std::thread::spawn(move || {
             for sleep in Timer::new(config.sampling_rate as f64) {
                 let mut traces = Vec::new();
@@ -224,6 +233,7 @@ impl Sampler {
 
                 // Send the collected info back
                 let late = sleep.err();
+                sampling_pending.fetch_add(1, Ordering::SeqCst);
                 if tx
                     .send(Sample {
                         traces,
@@ -246,14 +256,18 @@ impl Sampler {
             rx: Some(rx),
             version: None,
             sampling_thread: Some(sampling_thread),
+            pending,
         })
     }
-}
 
-impl Iterator for Sampler {
-    type Item = Sample;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.rx.as_ref().unwrap().recv().ok()
+    pub fn get_pending(&self) -> usize {
+        self.pending.load(Ordering::SeqCst)
+    }
+
+    pub fn next(&self) -> Option<Sample> {
+        let v = self.rx.as_ref().unwrap().recv().ok();
+        self.pending.fetch_sub(1, Ordering::SeqCst);
+        v
     }
 }
 
