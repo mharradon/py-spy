@@ -46,6 +46,7 @@ rand_distr = "0.4"
 remoteprocess = {version="0.4.12", features=["unwind"]}
 chrono = "0.4.26"
 zstd = "0.13.2"
+tikv-jemallocator = "0.5"
 
 [dev-dependencies]
 py-spy-testdata = "0.1.0"

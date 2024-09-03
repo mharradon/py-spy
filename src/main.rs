@@ -45,6 +45,13 @@ use stack_trace::{Frame, StackTrace};
 use chrono::{Local, SecondsFormat};
 use chunked_transfer::Encoder;
 
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 #[cfg(unix)]
 fn permission_denied(err: &Error) -> bool {
     err.chain().any(|cause| {
