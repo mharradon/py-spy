@@ -115,6 +115,9 @@ impl Recorder for speedscope::Stats {
     fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
         speedscope::Stats::write(self, w)
     }
+    fn write_on_demand(&mut self, w: &mut dyn Write) -> Result<(), Error> {
+        self.write(w)
+    }
 }
 
 impl Recorder for flamegraph::Flamegraph {
@@ -126,6 +129,9 @@ impl Recorder for flamegraph::Flamegraph {
     }
     fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
         flamegraph::Flamegraph::write(self, w)
+    }
+    fn write_on_demand(&mut self, w: &mut dyn Write) -> Result<(), Error> {
+        self.write(w)
     }
 }
 
@@ -153,6 +159,9 @@ impl Recorder for RawFlamegraph {
 
     fn write(&mut self, w: &mut dyn Write) -> Result<(), Error> {
         self.0.write_raw(w)
+    }
+    fn write_on_demand(&mut self, w: &mut dyn Write) -> Result<(), Error> {
+        self.write(w)
     }
 }
 
