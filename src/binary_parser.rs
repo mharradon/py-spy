@@ -9,9 +9,13 @@ use memmap2::Mmap;
 use regex::Regex;
 
 pub struct BinaryInfo {
+    pub filename: std::path::PathBuf,
     pub symbols: HashMap<String, u64>,
     pub bss_addr: u64,
     pub bss_size: u64,
+    pub offset: u64,
+    pub addr: u64,
+    pub size: u64,
 }
 
 impl BinaryInfo {
@@ -22,7 +26,7 @@ impl BinaryInfo {
 }
 
 /// Uses goblin to parse a binary file, returns information on symbols/bss/adjusted offset etc
-pub fn parse_binary(filename: &Path, addr: u64) -> Result<BinaryInfo, Error> {
+pub fn parse_binary(filename: &Path, addr: u64, size: u64) -> Result<BinaryInfo, Error> {
     let offset = addr;
 
     let mut symbols = HashMap::new();
@@ -77,9 +81,13 @@ pub fn parse_binary(filename: &Path, addr: u64) -> Result<BinaryInfo, Error> {
                 }
             }
             Ok(BinaryInfo {
+                filename: filename.to_owned(),
                 symbols,
                 bss_addr,
                 bss_size,
+                offset,
+                addr,
+                size,
             })
         }
 
@@ -151,9 +159,13 @@ pub fn parse_binary(filename: &Path, addr: u64) -> Result<BinaryInfo, Error> {
                 symbols.insert(name, dynsym.st_value + offset);
             }
             Ok(BinaryInfo {
+                filename: filename.to_owned(),
                 symbols,
                 bss_addr: bss_header.sh_addr + offset,
                 bss_size: bss_header.sh_size,
+                offset,
+                addr,
+                size,
             })
         }
         Object::PE(pe) => {
@@ -179,9 +191,13 @@ pub fn parse_binary(filename: &Path, addr: u64) -> Result<BinaryInfo, Error> {
                     let bss_size = u64::from(data_section.virtual_size);
 
                     BinaryInfo {
+                        filename: filename.to_owned(),
                         symbols,
                         bss_addr,
                         bss_size,
+                        offset,
+                        addr,
+                        size,
                     }
                 })
         }
